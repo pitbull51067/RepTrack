@@ -87,9 +87,21 @@ fun WorkoutSessionRoute(
     modifier: Modifier = Modifier,
     /** Opens how to do an exercise, by its name, on top of the workout. */
     onHowTo: (exercise: String) -> Unit = {},
+    /** Opens the picker to swap an exercise, by its name and the routine's own exercise in its place. */
+    onSwap: (exercise: String, original: String) -> Unit = { _, _ -> },
+    /** The swap the picker sent back: the exercise swapped out, then the new one. */
+    swapResult: Pair<String, String>? = null,
+    /** Clears [swapResult] once the workout has it, so it is not used twice. */
+    onSwapResultUsed: () -> Unit = {},
     viewModel: WorkoutSessionViewModel = viewModel(factory = WorkoutSessionViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(swapResult) {
+        val (from, to) = swapResult ?: return@LaunchedEffect
+        viewModel.swapExercise(from, to)
+        onSwapResultUsed()
+    }
 
     BackHandler(enabled = state.outcome == null) { viewModel.requestLeave() }
 
@@ -113,6 +125,7 @@ fun WorkoutSessionRoute(
         onSkipRest = viewModel::skipRest,
         onDismissError = viewModel::dismissError,
         onHowTo = onHowTo,
+        onSwap = { name -> onSwap(name, viewModel.routineExerciseFor(name)) },
         modifier = modifier,
     )
 
@@ -148,6 +161,7 @@ fun WorkoutSessionScreen(
     onDismissError: () -> Unit,
     modifier: Modifier = Modifier,
     onHowTo: (exercise: String) -> Unit = {},
+    onSwap: (exercise: String) -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -193,6 +207,7 @@ fun WorkoutSessionScreen(
                     onAddSet = { onAddSet(exercise.name) },
                     onEditSet = onEditSet,
                     onHowTo = { onHowTo(exercise.name) },
+                    onSwap = { onSwap(exercise.name) },
                 )
             }
         }
@@ -291,6 +306,7 @@ private fun ExerciseCard(
     onAddSet: () -> Unit,
     onEditSet: (LoggedSet) -> Unit,
     onHowTo: () -> Unit,
+    onSwap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
@@ -310,6 +326,14 @@ private fun ExerciseCard(
                 Icon(
                     painter = painterResource(R.drawable.ic_info),
                     contentDescription = stringResource(R.string.howto_open, exercise.name),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            // Something else for the same muscles, when the machine is taken or you are at home.
+            IconButton(onClick = onSwap, modifier = Modifier.testTag("swap_${exercise.name}")) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_swap),
+                    contentDescription = stringResource(R.string.session_swap, exercise.name),
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }

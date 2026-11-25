@@ -353,4 +353,85 @@ class WorkoutSessionViewModelTest {
         assertEquals("Push day", repository.allSessions.single().name)
         assertEquals("custom_1", repository.allSessions.single().routineId)
     }
+
+    // ---- Swapping an exercise ----
+
+    private fun WorkoutSessionViewModel.names() = uiState.value.exercises.map { it.name }
+
+    @Test
+    fun swap_isForThisWorkoutOnly_andTakesTheSamePlace() = runTest {
+        val viewModel = newViewModel()
+
+        viewModel.swapExercise("Bench press", "Push-up")
+
+        assertEquals(listOf("Squat", "Push-up", "Barbell row", "Plank"), viewModel.names())
+        assertEquals("Bench press", viewModel.routineExerciseFor("Push-up"))
+        // The routine itself is as it was, so next time starts the usual way.
+        assertNull(plan.edits.value["full_body_a"])
+    }
+
+    @Test
+    fun swap_survivesTheAppBeingKilled() = runTest {
+        val savedState = SavedStateHandle(mapOf("routineId" to "full_body_a"))
+        WorkoutSessionViewModel(repository, savedState, plan) { clock }.swapExercise("Squat", "Goblet squat")
+
+        val again = WorkoutSessionViewModel(repository, savedState, plan) { clock }
+
+        assertEquals(listOf("Goblet squat", "Bench press", "Barbell row", "Plank"), again.names())
+    }
+
+    @Test
+    fun swap_keepsTheSetsAlreadyLogged() = runTest {
+        val viewModel = newViewModel()
+        viewModel.log("Bench press", "60", "8")
+        advanceUntilIdle()
+
+        viewModel.swapExercise("Bench press", "Dumbbell bench press")
+
+        assertEquals(listOf("Squat", "Bench press", "Dumbbell bench press", "Barbell row", "Plank"), viewModel.names())
+        assertEquals(1, viewModel.uiState.value.exercises.first { it.name == "Bench press" }.sets.size)
+    }
+
+    @Test
+    fun swappingBack_givesTheRoutinesExerciseAgain() = runTest {
+        val viewModel = newViewModel()
+        viewModel.swapExercise("Bench press", "Push-up")
+
+        viewModel.swapExercise("Push-up", "Bench press")
+
+        assertEquals(listOf("Squat", "Bench press", "Barbell row", "Plank"), viewModel.names())
+    }
+
+    @Test
+    fun swapToAnExerciseAlreadyInTheWorkout_changesNothing() = runTest {
+        val viewModel = newViewModel()
+
+        viewModel.swapExercise("Bench press", "Plank")
+
+        assertEquals(listOf("Squat", "Bench press", "Barbell row", "Plank"), viewModel.names())
+    }
+
+    @Test
+    fun keptSwap_comesFromTheRoutine() = runTest {
+        val viewModel = newViewModel()
+
+        // "Keep for next time" in the picker saves the routine, then sends the swap back too.
+        plan.setRoutineExercises("full_body_a", listOf("Squat", "Push-up", "Barbell row", "Plank"))
+        viewModel.swapExercise("Bench press", "Push-up")
+
+        assertEquals(listOf("Squat", "Push-up", "Barbell row", "Plank"), viewModel.names())
+    }
+
+    @Test
+    fun keptSwap_thenSwappedAgain_staysInThatPlace() = runTest {
+        val viewModel = newViewModel()
+        // The swap comes back before the workout sees the routine change.
+        viewModel.swapExercise("Bench press", "Push-up")
+        plan.setRoutineExercises("full_body_a", listOf("Squat", "Push-up", "Barbell row", "Plank"))
+
+        assertEquals("Push-up", viewModel.routineExerciseFor("Push-up"))
+        viewModel.swapExercise("Push-up", "Dips")
+
+        assertEquals(listOf("Squat", "Dips", "Barbell row", "Plank"), viewModel.names())
+    }
 }

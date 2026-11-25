@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,35 +38,46 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.bu.reptrack.R
 import edu.bu.reptrack.domain.exercise.Exercise
+import edu.bu.reptrack.domain.exercise.SwapSuggestion
+import edu.bu.reptrack.domain.profile.TrainingPlace
 import edu.bu.reptrack.ui.components.IconTile
 import edu.bu.reptrack.ui.components.Overline
 import edu.bu.reptrack.ui.components.VoltCard
 import edu.bu.reptrack.ui.components.readableWidth
 
-/** Connects the exercise picker to its ViewModel, and closes it once the change is saved. */
+/**
+ * Connects the exercise picker to its ViewModel, and closes it once the change is saved. During a
+ * workout, [onSwapped] hands the swap back to the workout first.
+ */
 @Composable
 fun ExercisePickerRoute(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onSwapped: (from: String, to: String) -> Unit = { _, _ -> },
     viewModel: ExercisePickerViewModel = viewModel(factory = ExercisePickerViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     LaunchedEffect(state.done) {
-        if (state.done) onBack()
+        if (state.done) {
+            state.swapped?.let { (from, to) -> onSwapped(from, to) }
+            onBack()
+        }
     }
     ExercisePickerScreen(
         state = state,
         onBack = onBack,
         onQueryChange = viewModel::onQueryChange,
         onPick = viewModel::pick,
+        onKeepChange = viewModel::onKeepChange,
         modifier = modifier,
     )
 }
 
 /**
  * Picks an exercise from the wger catalog: to add to the routine, or to swap one out. When
- * swapping, exercises for the same muscles come first. A typed name the catalog does not have
- * can be added as the user's own. Stateless.
+ * swapping, suggestions come first, each with the muscles and equipment that make it a fit.
+ * During a workout, "Keep for next time" changes the routine too. A typed name the catalog does
+ * not have can be added as the user's own. Stateless.
  */
 @Composable
 fun ExercisePickerScreen(
@@ -72,6 +86,7 @@ fun ExercisePickerScreen(
     onQueryChange: (String) -> Unit,
     onPick: (name: String) -> Unit,
     modifier: Modifier = Modifier,
+    onKeepChange: (Boolean) -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -110,6 +125,9 @@ fun ExercisePickerScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp)
                 .testTag("picker_search"),
         )
+        if (state.canKeep) {
+            KeepRow(keep = state.keep, routineName = state.routineName, onKeepChange = onKeepChange)
+        }
         if (state.saveFailed) {
             Text(
                 text = stringResource(R.string.plan_save_failed),
@@ -146,10 +164,17 @@ fun ExercisePickerScreen(
                     )
                 }
             }
-            if (state.sameMuscles.isNotEmpty()) {
-                item(key = "same_header") { Header(R.string.picker_same_muscles) }
-                items(state.sameMuscles, key = { "same_${it.id}" }) { exercise ->
-                    ExercisePickRow(exercise = exercise, onPick = onPick)
+            if (state.suggestions.isNotEmpty()) {
+                item(key = "suggested_header") {
+                    Header(
+                        when (state.place) {
+                            TrainingPlace.GYM -> R.string.picker_suggested_gym
+                            TrainingPlace.HOME -> R.string.picker_suggested_home
+                        },
+                    )
+                }
+                itemsIndexed(state.suggestions, key = { _, suggestion -> "suggested_${suggestion.name}" }) { index, suggestion ->
+                    SuggestionRow(suggestion = suggestion, index = index, onPick = onPick)
                 }
             }
             if (state.results.isNotEmpty()) {
@@ -169,6 +194,50 @@ private fun Header(text: Int) {
         modifier = Modifier
             .padding(top = 8.dp)
             .semantics { heading() },
+    )
+}
+
+/** Ticked: the swap changes the routine as well, not just this workout. */
+@Composable
+private fun KeepRow(keep: Boolean, routineName: String, onKeepChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp)
+            .heightIn(min = 48.dp)
+            .toggleable(value = keep, role = Role.Checkbox, onValueChange = onKeepChange)
+            .padding(horizontal = 12.dp)
+            .testTag("picker_keep"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // The whole row is the checkbox, so the box itself does not take taps.
+        Checkbox(checked = keep, onCheckedChange = null)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(stringResource(R.string.picker_keep), style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = if (keep) {
+                    stringResource(R.string.picker_keep_on, routineName)
+                } else {
+                    stringResource(R.string.picker_keep_off)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** A suggestion, with why it fits: "Chest, Triceps · Dumbbell", or "Bodyweight" for no equipment. */
+@Composable
+private fun SuggestionRow(suggestion: SwapSuggestion, index: Int, onPick: (String) -> Unit) {
+    val equipment = suggestion.equipment.joinToString(", ").ifEmpty { stringResource(R.string.exercises_bodyweight) }
+    val muscles = suggestion.muscles.take(2).joinToString(", ")
+    PickRow(
+        title = suggestion.name,
+        subtitle = listOf(muscles, equipment).filter { it.isNotBlank() }.joinToString(" · "),
+        onClick = { onPick(suggestion.name) },
+        tag = "picker_suggestion_$index",
     )
 }
 

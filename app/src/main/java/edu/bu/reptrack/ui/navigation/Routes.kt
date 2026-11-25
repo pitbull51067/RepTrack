@@ -56,5 +56,20 @@ object Routes {
     const val HOW_TO = "how_to/{$ARG_EXERCISE_NAME}"
 
     /** Names can hold spaces and slashes, so they are encoded; Navigation decodes them again. */
-    fun howTo(exerciseName: String) = "how_to/" + URLEncoder.encode(exerciseName, "UTF-8").replace("+", "%20")
+    fun howTo(exerciseName: String) = "how_to/" + encode(exerciseName)
+
+    /**
+     * The catalog, to swap an exercise during a workout. [ARG_ORIGINAL] is the routine's own
+     * exercise in that place, which differs when it was already swapped earlier in the workout.
+     * The picked exercise goes back to the workout under [RESULT_SWAP], as a list of two names:
+     * the one swapped out, then the new one.
+     */
+    const val ARG_ORIGINAL = "original"
+    const val SWAP_PICK = "swap_pick/{$ARG_ROUTINE_ID}/{$ARG_EXERCISE_NAME}?$ARG_ORIGINAL={$ARG_ORIGINAL}"
+    const val RESULT_SWAP = "swap_result"
+
+    fun swapPick(routineId: String, exerciseName: String, original: String = exerciseName) =
+        "swap_pick/$routineId/" + encode(exerciseName) + "?$ARG_ORIGINAL=" + encode(original)
+
+    private fun encode(name: String) = URLEncoder.encode(name, "UTF-8").replace("+", "%20")
 }

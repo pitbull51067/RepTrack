@@ -13,6 +13,7 @@ import edu.bu.reptrack.data.workout.WorkoutRepository
 import edu.bu.reptrack.domain.profile.formatKg
 import edu.bu.reptrack.domain.workout.LoggedSet
 import edu.bu.reptrack.domain.workout.Rest
+import edu.bu.reptrack.domain.workout.SessionSwaps
 import edu.bu.reptrack.domain.workout.SetInput
 import edu.bu.reptrack.domain.workout.StarterRoutines
 import edu.bu.reptrack.domain.workout.WorkoutTemplate
@@ -143,12 +144,18 @@ class WorkoutSessionViewModel(
     private val restTotalMs = savedState.getStateFlow(KEY_REST_TOTAL_MS, Rest.DEFAULT_MS)
     private val rest = combine(restEndsAt, restTotalMs) { endsAt, total -> endsAt?.let { RestTimerUi(it, total) } }
 
-    val uiState: StateFlow<WorkoutSessionUiState> = combine(sets, local, rest, routine) { sets, local, rest, routine ->
-        buildState(sets, local, routine).copy(rest = rest)
+    // Exercises swapped for this workout only. Kept in SavedStateHandle too, so they survive the app being killed.
+    private val swaps = savedState.getStateFlow<ArrayList<String>>(KEY_SWAPS, arrayListOf())
+
+    /** The routine with this workout's swaps in place of the exercises they replace. */
+    private val routineWithSwaps = combine(routine, swaps) { routine, flat -> routine to SessionSwaps.decode(flat) }
+
+    val uiState: StateFlow<WorkoutSessionUiState> = combine(sets, local, rest, routineWithSwaps) { sets, local, rest, (routine, swapped) ->
+        buildState(sets, local, routine, swapped).copy(rest = rest)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.Eagerly,
-        initialValue = buildState(emptyList(), LocalState(), routine.value),
+        initialValue = buildState(emptyList(), LocalState(), routine.value, SessionSwaps.decode(swaps.value)),
     )
 
     // ---- Typing in an exercise card ----
@@ -177,6 +184,29 @@ class WorkoutSessionViewModel(
             repository.addSet(id, exercise, parsed.weightKg, parsed.reps)
             startRest()
         }
+    }
+
+    // ---- Swapping an exercise ----
+
+    /**
+     * Does [to] instead of [from] for this workout only. Sets already logged for [from] stay,
+     * with its card. "Keep for next time" in the picker changes the routine itself as well.
+     */
+    fun swapExercise(from: String, to: String) {
+        val shown = uiState.value.exercises.map { it.name }
+        savedState[KEY_SWAPS] = SessionSwaps.encode(SessionSwaps.record(currentSwaps(), from, to, shown))
+    }
+
+    /** The routine's own exercise that [name] stands in for this workout, or [name] itself. */
+    fun routineExerciseFor(name: String): String = SessionSwaps.originalOf(currentSwaps(), name)
+
+    /**
+     * This workout's swaps, without those for exercises the routine no longer has: after "Keep for
+     * next time" the routine itself holds the new exercise, so the swap is not needed any more.
+     */
+    private fun currentSwaps(): Map<String, String> {
+        val exercises = routine.value?.exercises.orEmpty()
+        return SessionSwaps.decode(swaps.value).filterKeys { it in exercises }
     }
 
     // ---- Edit dialog ----
@@ -316,8 +346,14 @@ class WorkoutSessionViewModel(
         local.update { state -> state.copy(editing = state.editing?.let(change)) }
     }
 
-    private fun buildState(sets: List<LoggedSet>, local: LocalState, routine: WorkoutTemplate?): WorkoutSessionUiState {
-        val names = exercisesToShow(routine?.exercises.orEmpty(), sets)
+    private fun buildState(
+        sets: List<LoggedSet>,
+        local: LocalState,
+        routine: WorkoutTemplate?,
+        swapped: Map<String, String>,
+    ): WorkoutSessionUiState {
+        val logged = sets.mapTo(HashSet()) { it.exerciseName }
+        val names = exercisesToShow(SessionSwaps.apply(routine?.exercises.orEmpty(), swapped, logged), sets)
         val exercises = names.map { name ->
             val draft = local.drafts[name] ?: Draft()
             ExerciseUi(
@@ -345,6 +381,7 @@ class WorkoutSessionViewModel(
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_REST_ENDS_AT = "rest_ends_at"
         private const val KEY_REST_TOTAL_MS = "rest_total_ms"
+        private const val KEY_SWAPS = "swaps"
 
         /** Used only if the routine id is unknown, which should not happen. */
         private const val FALLBACK_NAME = "Workout"

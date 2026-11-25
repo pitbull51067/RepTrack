@@ -140,7 +140,14 @@
     <string name="picker_swap_title">Swap %1$s</string>
     <!-- Example: "Add to Upper body" -->
     <string name="picker_add_title">Add to %1$s</string>
-    <string name="picker_same_muscles">Same muscles</string>
+    <!-- Swap suggestions: hand-picked first, then catalog exercises for the same muscles -->
+    <string name="picker_suggested_gym">Suggested for the gym</string>
+    <string name="picker_suggested_home">Suggested for home</string>
+    <!-- During a workout: the swap is for this workout unless this is ticked -->
+    <string name="picker_keep">Keep for next time</string>
+    <string name="picker_keep_off">Only for this workout</string>
+    <!-- Example: "Also changes Upper body" -->
+    <string name="picker_keep_on">Also changes %1$s</string>
     <string name="picker_all">All exercises</string>
     <!-- Example: "Add “Face pull” as your own exercise" -->
     <string name="picker_custom">Add “%1$s” as your own exercise</string>
@@ -160,6 +167,8 @@
 
     <!-- Workout session -->
     <string name="session_fallback_title">Workout</string>
+    <!-- Read by TalkBack. Example: "Swap Squat for another exercise" -->
+    <string name="session_swap">Swap %1$s for another exercise</string>
     <string name="session_close">Leave workout</string>
     <string name="session_weight">Weight</string>
     <string name="session_reps">Reps</string>

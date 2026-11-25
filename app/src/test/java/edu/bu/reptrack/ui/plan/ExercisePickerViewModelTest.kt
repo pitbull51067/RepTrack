@@ -2,8 +2,13 @@ package edu.bu.reptrack.ui.plan
 
 import androidx.lifecycle.SavedStateHandle
 import edu.bu.reptrack.domain.exercise.Exercise
+import edu.bu.reptrack.domain.exercise.SwapSuggestions
+import edu.bu.reptrack.domain.profile.FitnessGoal
+import edu.bu.reptrack.domain.profile.TrainingPlace
+import edu.bu.reptrack.domain.profile.UserProfile
 import edu.bu.reptrack.testing.FakeExerciseRepository
 import edu.bu.reptrack.testing.FakePlanRepository
+import edu.bu.reptrack.testing.FakeProfileRepository
 import edu.bu.reptrack.testing.MainDispatcherRule
 import edu.bu.reptrack.ui.navigation.Routes
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -28,6 +33,7 @@ class ExercisePickerViewModelTest {
         Exercise(id, name, "", "Chest", muscles.toList(), listOf("Barbell"), null)
 
     private val plan = FakePlanRepository()
+    private val profiles = FakeProfileRepository()
     private val catalog = FakeExerciseRepository(
         saved = listOf(
             exercise(1, "Bench Press", "Chest", "Triceps"),
@@ -38,9 +44,15 @@ class ExercisePickerViewModelTest {
     )
 
     // Upper: Bench press, Barbell row, Overhead press, Lat pulldown, Biceps curl.
-    private fun TestScope.open(replaceIndex: Int = -1): ExercisePickerViewModel {
-        val savedState = SavedStateHandle(mapOf(Routes.ARG_ROUTINE_ID to "upper", Routes.ARG_REPLACE_INDEX to replaceIndex))
-        val viewModel = ExercisePickerViewModel(plan, catalog, savedState)
+    private fun TestScope.open(replaceIndex: Int = -1, routineId: String = "upper"): ExercisePickerViewModel =
+        start(mapOf(Routes.ARG_ROUTINE_ID to routineId, Routes.ARG_REPLACE_INDEX to replaceIndex))
+
+    /** Opened from a workout, to swap [exercise] there. [original] is the routine's own exercise in its place. */
+    private fun TestScope.openFromWorkout(exercise: String, original: String? = null, routineId: String = "upper"): ExercisePickerViewModel =
+        start(mapOf(Routes.ARG_ROUTINE_ID to routineId, Routes.ARG_EXERCISE_NAME to exercise, Routes.ARG_ORIGINAL to original))
+
+    private fun TestScope.start(args: Map<String, Any?>): ExercisePickerViewModel {
+        val viewModel = ExercisePickerViewModel(plan, catalog, profiles, SavedStateHandle(args))
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         return viewModel
     }
@@ -65,19 +77,135 @@ class ExercisePickerViewModelTest {
     }
 
     @Test
-    fun swapping_suggestsTheSameMusclesFirst_andKeepsThePlace() = runTest {
+    fun swapping_suggestsOurPicksThenTheSameMuscles_andKeepsThePlace() = runTest {
         val viewModel = open(replaceIndex = 0)
 
         val state = viewModel.uiState.value
         assertEquals("Bench press", state.replacing)
-        assertEquals(listOf("Dips", "Incline Bench Press"), state.sameMuscles.map { it.name })
-        assertFalse(state.results.any { it.name == "Dips" })
+        assertEquals(TrainingPlace.GYM, state.place)
+        assertEquals(
+            listOf("Dumbbell bench press", "Machine chest press", "Dumbbell floor press", "Push-up", "Dips", "Incline Bench Press"),
+            state.suggestions.map { it.name },
+        )
+        // What is suggested is not listed again below.
+        assertEquals(listOf("Pull-Ups"), state.results.map { it.name })
+        assertFalse(state.canKeep)
 
         viewModel.pick("Dips")
 
         val saved = plan.edits.value.getValue("upper")
         assertEquals("Dips", saved[0])
         assertEquals(listOf("Barbell row", "Overhead press", "Lat pulldown", "Biceps curl"), saved.drop(1))
+    }
+
+    @Test
+    fun aHomeRoutine_onlySuggestsWhatNeedsNoGym() = runTest {
+        // Bodyweight circuit A: Push-up, Bodyweight squat, Glute bridge, Plank.
+        val state = open(replaceIndex = 0, routineId = "bodyweight_a").uiState.value
+
+        assertEquals(TrainingPlace.HOME, state.place)
+        assertEquals("Push-up", state.replacing)
+        assertTrue(state.suggestions.isNotEmpty())
+        assertTrue(state.suggestions.all { SwapSuggestions.fitsHome(it.equipment) })
+        // The catalog's barbell exercises are left out.
+        assertFalse(state.suggestions.any { it.name == "Incline Bench Press" })
+    }
+
+    @Test
+    fun ownRoutine_usesWhereTheUserTrains() = runTest {
+        plan.ownRoutines.value = listOf("custom_1" to "Push day")
+        plan.setRoutineExercises("custom_1", listOf("Bench press", "Dips"))
+        profiles.saveProfile(UserProfile(178f, 80f, 75f, FitnessGoal.STAY_FIT, TrainingPlace.HOME))
+
+        val state = open(replaceIndex = 0, routineId = "custom_1").uiState.value
+
+        assertEquals(TrainingPlace.HOME, state.place)
+        assertEquals(listOf("Dumbbell floor press", "Push-up"), state.suggestions.map { it.name })
+    }
+
+    @Test
+    fun searching_hidesTheSuggestions() = runTest {
+        val viewModel = open(replaceIndex = 0)
+
+        viewModel.onQueryChange("dip")
+
+        assertTrue(viewModel.uiState.value.suggestions.isEmpty())
+        assertEquals(listOf("Dips"), viewModel.uiState.value.results.map { it.name })
+    }
+
+    @Test
+    fun duringAWorkout_theSwapIsForThatWorkoutOnly() = runTest {
+        val viewModel = openFromWorkout("Bench press")
+
+        val state = viewModel.uiState.value
+        assertEquals("Swapping", "Bench press", state.replacing)
+        assertTrue(state.canKeep)
+        assertFalse(state.keep)
+
+        viewModel.pick("Push-up")
+
+        assertEquals("Bench press" to "Push-up", viewModel.uiState.value.swapped)
+        assertTrue(viewModel.uiState.value.done)
+        // The routine is as it was.
+        assertNull(plan.edits.value["upper"])
+    }
+
+    @Test
+    fun duringAWorkout_keepForNextTime_changesTheRoutineToo() = runTest {
+        val viewModel = openFromWorkout("Barbell row")
+
+        viewModel.onKeepChange(true)
+        assertTrue(viewModel.uiState.value.keep)
+        viewModel.pick("Dumbbell row")
+
+        assertEquals(
+            listOf("Bench press", "Dumbbell row", "Overhead press", "Lat pulldown", "Biceps curl"),
+            plan.edits.value["upper"],
+        )
+        assertEquals("Barbell row" to "Dumbbell row", viewModel.uiState.value.swapped)
+        assertTrue(viewModel.uiState.value.done)
+    }
+
+    @Test
+    fun duringAWorkout_keepThatFails_staysOpen() = runTest {
+        val viewModel = openFromWorkout("Barbell row")
+        plan.failWrites = true
+
+        viewModel.onKeepChange(true)
+        viewModel.pick("Dumbbell row")
+
+        assertTrue(viewModel.uiState.value.saveFailed)
+        assertFalse(viewModel.uiState.value.done)
+        assertNull(viewModel.uiState.value.swapped)
+    }
+
+    @Test
+    fun duringAWorkout_aSwapFromEarlier_offersTheRoutinesOwnFirst_andKeepsInItsPlace() = runTest {
+        // Bench press was swapped for Dumbbell bench press earlier in this workout.
+        val viewModel = openFromWorkout("Dumbbell bench press", original = "Bench press")
+
+        val state = viewModel.uiState.value
+        assertEquals("Dumbbell bench press", state.replacing)
+        assertEquals("Bench press", state.suggestions.first().name)
+        assertTrue(state.canKeep)
+
+        viewModel.onKeepChange(true)
+        viewModel.pick("Push-up")
+
+        assertEquals("Dumbbell bench press" to "Push-up", viewModel.uiState.value.swapped)
+        assertEquals("Push-up", plan.edits.value.getValue("upper").first())
+    }
+
+    @Test
+    fun duringAWorkout_anExerciseNotInTheRoutine_cannotBeKept() = runTest {
+        val viewModel = openFromWorkout("Face pull")
+
+        assertFalse(viewModel.uiState.value.canKeep)
+        viewModel.onKeepChange(true)
+        viewModel.pick("Dips")
+
+        assertEquals("Face pull" to "Dips", viewModel.uiState.value.swapped)
+        assertNull(plan.edits.value["upper"])
     }
 
     @Test
@@ -97,6 +225,7 @@ class ExercisePickerViewModelTest {
         val viewModel = ExercisePickerViewModel(
             plan,
             FakeExerciseRepository(),
+            profiles,
             SavedStateHandle(mapOf(Routes.ARG_ROUTINE_ID to "upper", Routes.ARG_REPLACE_INDEX to -1)),
         )
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
@@ -123,7 +252,7 @@ class ExercisePickerViewModelTest {
     fun addingToAnEmptyOwnRoutine() = runTest {
         plan.ownRoutines.value = listOf("custom_1" to "Push day")
         val savedState = SavedStateHandle(mapOf(Routes.ARG_ROUTINE_ID to "custom_1", Routes.ARG_REPLACE_INDEX to -1))
-        val viewModel = ExercisePickerViewModel(plan, catalog, savedState)
+        val viewModel = ExercisePickerViewModel(plan, catalog, profiles, savedState)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
 
         assertEquals("Push day", viewModel.uiState.value.routineName)

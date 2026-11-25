@@ -24,6 +24,7 @@ import edu.bu.reptrack.data.auth.AuthError
 import edu.bu.reptrack.data.auth.AuthUser
 import edu.bu.reptrack.domain.exercise.Exercise
 import edu.bu.reptrack.domain.exercise.ExerciseDemo
+import edu.bu.reptrack.domain.exercise.SwapSuggestion
 import edu.bu.reptrack.domain.profile.FitnessGoal
 import edu.bu.reptrack.domain.profile.StarterPlan
 import edu.bu.reptrack.domain.profile.TrainingPlace
@@ -447,8 +448,13 @@ class AccessibilityChecksTest {
             routineName = "Upper body",
             replacing = "Bench press",
             query = "",
-            sameMuscles = listOf(benchPress.copy(id = 2, name = "Dumbbell Bench Press", equipment = listOf("Dumbbell"))),
+            suggestions = listOf(
+                SwapSuggestion("Dumbbell bench press", listOf("Chest", "Triceps"), listOf("Dumbbell", "Bench")),
+                SwapSuggestion("Push-up", listOf("Chest", "Triceps"), emptyList()),
+            ),
             results = listOf(benchPress.copy(id = 3, name = "Dips", equipment = emptyList())),
+            // As opened from a workout, so the "Keep for next time" row is checked too.
+            canKeep = true,
         ),
         onBack = {},
         onQueryChange = {},

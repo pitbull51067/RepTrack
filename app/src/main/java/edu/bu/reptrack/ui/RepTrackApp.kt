@@ -101,6 +101,7 @@ private val fullScreenRoutes = setOf(
     Routes.RUN_STORY,
     // Opened from a workout, which is full screen too.
     Routes.HOW_TO,
+    Routes.SWAP_PICK,
 )
 
 /**
@@ -304,6 +305,29 @@ fun RepTrackNavHost(
                     ) {
                         ExercisePickerRoute(onBack = { navController.popBackStack() })
                     }
+                    // The same catalog, to swap an exercise during a workout. The swap goes back to
+                    // the workout through its back stack entry, then the picker closes.
+                    composable(
+                        route = Routes.SWAP_PICK,
+                        arguments = listOf(
+                            navArgument(Routes.ARG_ROUTINE_ID) { type = NavType.StringType },
+                            navArgument(Routes.ARG_EXERCISE_NAME) { type = NavType.StringType },
+                            navArgument(Routes.ARG_ORIGINAL) {
+                                type = NavType.StringType
+                                nullable = true
+                                defaultValue = null
+                            },
+                        ),
+                        enterTransition = { slideInFromRight() },
+                        popExitTransition = { slideOutToRight() },
+                    ) {
+                        ExercisePickerRoute(
+                            onBack = { navController.popBackStack() },
+                            onSwapped = { from, to ->
+                                navController.previousBackStackEntry?.savedStateHandle?.set(Routes.RESULT_SWAP, arrayListOf(from, to))
+                            },
+                        )
+                    }
                     // How to do an exercise, by name: photos and steps. From a routine or during a workout.
                     composable(
                         route = Routes.HOW_TO,
@@ -338,7 +362,11 @@ fun RepTrackNavHost(
                         arguments = listOf(navArgument(Routes.ARG_ROUTINE_ID) { type = NavType.StringType }),
                         enterTransition = { slideInFromRight() },
                         popExitTransition = { slideOutToRight() },
-                    ) {
+                    ) { entry ->
+                        val routineId = entry.arguments?.getString(Routes.ARG_ROUTINE_ID).orEmpty()
+                        val swapResult by entry.savedStateHandle
+                            .getStateFlow<ArrayList<String>?>(Routes.RESULT_SWAP, null)
+                            .collectAsStateWithLifecycle()
                         // The routine id reaches the ViewModel through its SavedStateHandle.
                         WorkoutSessionRoute(
                             onFinished = {
@@ -348,6 +376,9 @@ fun RepTrackNavHost(
                             },
                             onLeave = { navController.popBackStack() },
                             onHowTo = { name -> navController.navigate(Routes.howTo(name)) },
+                            onSwap = { name, original -> navController.navigate(Routes.swapPick(routineId, name, original)) },
+                            swapResult = swapResult?.takeIf { it.size == 2 }?.let { it[0] to it[1] },
+                            onSwapResultUsed = { entry.savedStateHandle.remove<ArrayList<String>>(Routes.RESULT_SWAP) },
                         )
                     }
                 }

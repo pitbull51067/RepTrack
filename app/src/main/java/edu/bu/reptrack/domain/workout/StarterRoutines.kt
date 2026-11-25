@@ -1,6 +1,7 @@
 package edu.bu.reptrack.domain.workout
 
 import edu.bu.reptrack.domain.profile.PlanType
+import edu.bu.reptrack.domain.profile.TrainingPlace
 
 /** A ready-made workout: a name and its exercises in order. */
 data class WorkoutTemplate(
@@ -74,6 +75,15 @@ object StarterRoutines {
     /** Looks up a routine by its id, or returns null if there is none. */
     fun find(id: String): WorkoutTemplate? =
         routinesByPlan.values.flatten().firstOrNull { it.id == id }
+
+    /** Where a built-in routine is done: the bodyweight plans are for home. Null for the user's own routines. */
+    fun placeOf(id: String): TrainingPlace? {
+        val type = routinesByPlan.entries.firstOrNull { (_, routines) -> routines.any { it.id == id } }?.key ?: return null
+        return when (type) {
+            PlanType.FULL_BODY, PlanType.UPPER_LOWER -> TrainingPlace.GYM
+            PlanType.BODYWEIGHT_FULL_BODY, PlanType.BODYWEIGHT_STRENGTH -> TrainingPlace.HOME
+        }
+    }
 }
 
 /**

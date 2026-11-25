@@ -1,6 +1,9 @@
 package edu.bu.reptrack.ui.session
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -36,6 +39,10 @@ class WorkoutSessionTest {
     private val finished = AtomicBoolean(false)
     private val left = AtomicBoolean(false)
     private var howTo: String? = null
+    private var swapAsked: Pair<String, String>? = null
+
+    /** Stands in for the picker: what it would send back, then cleared like the real back stack entry. */
+    private var pickerResult by mutableStateOf<Pair<String, String>?>(null)
 
     private fun showSession() {
         composeRule.setContent {
@@ -47,6 +54,9 @@ class WorkoutSessionTest {
                     onFinished = { finished.set(true) },
                     onLeave = { left.set(true) },
                     onHowTo = { howTo = it },
+                    onSwap = { name, original -> swapAsked = name to original },
+                    swapResult = pickerResult,
+                    onSwapResultUsed = { pickerResult = null },
                     viewModel = viewModel,
                 )
             }
@@ -83,6 +93,25 @@ class WorkoutSessionTest {
         composeRule.onNodeWithContentDescription("How to do Squat").performScrollTo().performClick()
 
         assertEquals("Squat", howTo)
+    }
+
+    @Test
+    fun theSwapButton_opensThePicker_andTheSwapTakesTheSamePlace() {
+        showSession()
+
+        composeRule.onNodeWithContentDescription("Swap Bench press for another exercise").performScrollTo().performClick()
+        assertEquals("Bench press" to "Bench press", swapAsked)
+
+        composeRule.runOnIdle { pickerResult = "Bench press" to "Push-up" }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("weight_Push-up").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("weight_Bench press").assertDoesNotExist()
+        assertEquals(null, pickerResult)
+
+        // Swapping the swap again tells the picker which routine exercise it stands for.
+        composeRule.onNodeWithContentDescription("Swap Push-up for another exercise").performScrollTo().performClick()
+        assertEquals("Push-up" to "Bench press", swapAsked)
     }
 
     @Test
